@@ -4,7 +4,6 @@ use std::process::Command;
 
 
 fn main() {
-    
     let make_result = Command::new("make")
         .arg("libabpoa")
         .current_dir("abPOA")

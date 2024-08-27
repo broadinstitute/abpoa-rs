@@ -27,6 +27,12 @@ impl AlignmentParameters {
     }
 }
 
+impl Drop for AlignmentParameters {
+    fn drop(&mut self) {
+        unsafe { ffi::abpoa_free_para(self.abpoa_params) };
+    }
+}
+
 /// The multiple sequence alignment POA graph
 pub struct Graph {
     graph_impl: *mut ffi::abpoa_t,
@@ -45,7 +51,8 @@ impl Graph {
     }
 }
 
-
-
-
-
+impl Drop for Graph {
+    fn drop(&mut self) {
+        unsafe { ffi::abpoa_free(self.graph_impl) };
+    }
+}
