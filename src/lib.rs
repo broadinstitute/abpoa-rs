@@ -213,6 +213,57 @@ impl Graph {
     pub fn new() -> Self {
         Self::default()
     }
+    
+    fn get_abs_ptr(&mut self) -> *mut ffi::abpoa_seq_t {
+        unsafe { (*self.graph_impl).abs }
+    }
+    
+    pub fn num_nodes(&self) -> usize {
+        unsafe { (*(*self.graph_impl).abg).node_n as usize }
+    }
+    
+    pub fn num_edges(&self) -> usize {
+        unsafe { (*(*self.graph_impl).abg).node_m as usize }
+    }
+    
+    pub fn num_sequences(&self) -> usize {
+        unsafe { (*(*self.graph_impl).abs).n_seq as usize }
+    }
+    
+    pub fn add_alignment(&mut self, align_params: &AlignmentParameters, sequence: &[u8], weights: &[i32], name: &[u8], alignment: AlignmentResult) {
+        let num_existing_seq = self.num_sequences();
+        
+        // Make space for the new sequence
+        self.prepare_for_new_sequences(1);
+        
+        // Set new sequence name
+        unsafe {
+            let target = (*self.get_abs_ptr()).name.add(num_existing_seq);
+            ffi::abpoa_cpy_str(target, name.as_ptr() as *mut i8, name.len() as i32)
+        }
+        
+        unsafe {
+            ffi::abpoa_add_graph_alignment(
+                self.graph_impl, 
+                align_params.abpoa_params, 
+                sequence.as_ptr() as *mut u8, 
+                weights.as_ptr() as *mut i32, 
+                sequence.len() as i32, 
+                std::ptr::null_mut::<i32>(), 
+                alignment.result_impl, 
+                num_existing_seq as i32 + 1, 
+                num_existing_seq as i32 + 1, 
+                true as i32
+            );
+        }
+    }
+    
+    fn prepare_for_new_sequences(&mut self, num_new_sequences: usize) {
+        unsafe {
+            (*self.get_abs_ptr()).n_seq += num_new_sequences as i32;
+            ffi::abpoa_realloc_seq(self.get_abs_ptr());
+        }
+    }
 }
 
 impl Drop for Graph {
@@ -271,11 +322,6 @@ pub fn align_to_graph(graph: &mut Graph, aln_params: &AlignmentParameters, seque
 }
 
 
-/// Perform a multiple sequence alignment
-pub fn msa() {
-    
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -285,7 +331,7 @@ mod tests {
     fn test_align_params_builder() {
         let params = AlignmentParametersBuilder::new()
             .ambiguous_strand(true)
-            .band_width(1)
+            .band_width(10)
             .band_f(1.0)
             .use_amino_acids(true)
             .consensus_algorithm(ConsensusAlgorithm::HeaviestBundle)
@@ -293,7 +339,34 @@ mod tests {
             .min_consensus_frequency(0.5)
             .build();
         
-        assert_eq!(params.abpoa_params.is_null(), false);
-        ass
+        assert!(!params.abpoa_params.is_null());
+        unsafe {
+            assert!((*params.abpoa_params).m > 5);
+        }
+    }
+    
+    #[test]
+    fn test_alignment_to_graph() {
+        let mut graph = Graph::new();
+        assert_eq!(graph.num_nodes(), 2);  // Includes the special source and sink nodes
+        
+        let aln_params = AlignmentParameters::default();
+        let sequence = b"CGTACGTACTGACGTACGATCGTACTGACGTCGTCA";
+        let weights = vec![1; sequence.len()];
+        
+        let result = align_to_graph(&mut graph, &aln_params, sequence);
+        assert_eq!(result.get_best_score(), 0);
+        graph.add_alignment(&aln_params, sequence, &weights, b"seq1", result);
+        assert_eq!(graph.num_nodes(), 2 + sequence.len());
+        assert_eq!(graph.num_sequences(), 1);
+        
+        let sequence2 = b"CGTACGTACTGACGTTTGATCGTACTGACGTCGTCA";
+        let weights2 = vec![1; sequence2.len()];
+        
+        let result = align_to_graph(&mut graph, &aln_params, sequence2);
+        assert_eq!(result.get_num_matches(), sequence2.len() as i32 - 2);
+        graph.add_alignment(&aln_params, sequence2, &weights2, b"seq2", result);
+        assert_eq!(graph.num_nodes(), 2 + sequence.len() + 2);
+        
     }
 }

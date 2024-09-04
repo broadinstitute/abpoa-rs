@@ -42,6 +42,7 @@ fn main() {
         // The input header we would like to generate
         // bindings for.
         .header("abPOA/include/abpoa.h")
+        .header("abPOA/src/abpoa_seq.h")
         .clang_args(&compiler_args)
         .opaque_type("abpoa_simd_matrix_t")
         .blocklist_type(r".*\d+x\d+_t")
