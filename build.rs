@@ -23,9 +23,9 @@ fn main() {
     builder
         .files(
             glob("abPOA/src/*.c")
-            .expect("Could not find abPOA source files")
-            .map(|x| x.unwrap())
-            .filter(|x| !x.ends_with("abpoa.c"))
+                .expect("Could not find abPOA source files")
+                .map(|x| x.unwrap())
+                .filter(|x| !x.ends_with("abpoa.c")) // exclude the CLI main file (which also includes a main() function)
         )
         .include("abPOA/include");
 
@@ -43,7 +43,6 @@ fn main() {
         // bindings for.
         .header("abPOA/include/abpoa.h")
         .clang_args(&compiler_args)
-        .opaque_type("abpoa_t")
         .opaque_type("abpoa_simd_matrix_t")
         .blocklist_type(r".*\d+x\d+_t")
         .blocklist_type(r".*\d+x\d+x\d+_t")
