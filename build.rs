@@ -1,21 +1,41 @@
 use std::path::PathBuf;
 use std::env;
-use std::process::Command;
+
+use glob::glob;
 
 
 fn main() {
-    let make_result = Command::new("make")
-        .arg("libabpoa")
-        .current_dir("abPOA")
-        .status()
-        .expect("Could not build abPOA! GNU make installed?");
-    
-    if !make_result.success() {
-        panic!("Build of abPOA unsuccessful!");
+    let mut builder = cc::Build::new();
+        
+    builder
+        .files(
+            glob("abPOA/src/*.c")
+            .expect("Could not find abPOA source files")
+            .map(|x| x.unwrap())
+        )
+        .include("abPOA/include")
+        .define("USE_SIMDE", None)
+        .define("SIMDE_ENABLE_NATIVE_ALIASES", None)
+        .flag("-Wall")
+        .flag("-Wno-unused-function")
+        .flag("-Wno-misleading-indentation");
+        
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        builder.define("__AVX2__", None);
+        builder.flag("-march=armv8-a+simd");
     }
     
-    println!("cargo:rustc-link-search=native={}/abPOA/lib", env::current_dir().unwrap().display());
-    println!("cargo:rustc-link-lib=abpoa");
+    builder.compile("abpoa");
+    
+    let compiler_args = [
+        "-Wall",
+        "-Wno-unused-function",
+        "-Wno-misleading-indentation",
+        "-DUSE_SIMDE",
+        "-DSIMDE_ENABLE_NATIVE_ALIASES",
+    ];
+    
+    
     
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
@@ -24,13 +44,7 @@ fn main() {
         // The input header we would like to generate
         // bindings for.
         .header("abPOA/include/abpoa.h")
-        .clang_args([
-            "-Wall",
-            "-Wno-unused-function",
-            "-Wno-misleading-indentation",
-            "-DUSE_SIMDE",
-            "-DSIMDE_ENABLE_NATIVE_ALIASES",
-        ])
+        .clang_args(&compiler_args)
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
