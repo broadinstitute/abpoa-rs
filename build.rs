@@ -51,6 +51,7 @@ fn main() {
         .blocklist_type(r"simde_.*")
         .blocklist_type(r"__m\d+[dfi]?")
         .blocklist_type(r"SIMD[if]")
+        .blocklist_type(r"FE_.*")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
