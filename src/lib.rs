@@ -159,6 +159,12 @@ impl AlignmentParametersBuilder {
     }
 }
 
+impl Default for AlignmentParametersBuilder {
+    fn default() -> Self {
+        AlignmentParametersBuilder::new()
+    }
+}
+
 impl Drop for AlignmentParametersBuilder {
     fn drop(&mut self) {
         if self.abpoa_params.is_null() {
@@ -173,12 +179,6 @@ pub struct AlignmentParameters {
     abpoa_params: *mut ffi::abpoa_para_t,
 }
     
-impl AlignmentParameters {
-    fn get_mut_ptr(&mut self) -> *mut ffi::abpoa_para_t {
-        self.abpoa_params
-    }
-}
-
 impl Drop for AlignmentParameters {
     fn drop(&mut self) {
         if self.abpoa_params.is_null() {
@@ -294,5 +294,6 @@ mod tests {
             .build();
         
         assert_eq!(params.abpoa_params.is_null(), false);
+        ass
     }
 }
