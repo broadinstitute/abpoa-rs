@@ -12,14 +12,14 @@ fn main() {
         "-DUSE_SIMDE",
         "-DSIMDE_ENABLE_NATIVE_ALIASES",
     ];
-    
+
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         compiler_args.push("-D__AVX2__");
         compiler_args.push("-march=armv8-a+simd");
     }
-    
+
     let mut builder = cc::Build::new();
-        
+
     builder
         .files(
             glob("abPOA/src/*.c")
@@ -28,13 +28,13 @@ fn main() {
             .filter(|x| !x.ends_with("abpoa.c"))
         )
         .include("abPOA/include");
-    
+
     for flag in &compiler_args {
         builder.flag(flag);
     }
-    
+
     builder.compile("abpoa");
-    
+
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
@@ -51,7 +51,7 @@ fn main() {
         .blocklist_type(r"simde_.*")
         .blocklist_type(r"__m\d+[dfi]?")
         .blocklist_type(r"SIMD[if]")
-        .blocklist_type(r"FE_.*")
+        .blocklist_item(r"F[EP]_.*")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -59,7 +59,7 @@ fn main() {
         .generate()
         // Unwrap the Result and panic on failure.
         .expect("Unable to generate bindings");
-    
+
     // Write the bindings to the $OUT_DIR/bindings.rs file.
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
     bindings
