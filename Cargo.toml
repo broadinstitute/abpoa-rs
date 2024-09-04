@@ -11,6 +11,9 @@ include = [
 links = "abpoa"
 
 [dependencies]
+libc = "0.2.158"
 
 [build-dependencies]
 bindgen = "0.70.1"
+cc = "1.1.15"
+glob = "0.3.1"
