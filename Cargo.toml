@@ -12,6 +12,7 @@ links = "abpoa"
 
 [dependencies]
 libc = "0.2.158"
+libz-sys = { version = "1.1", default-features = false, features = ["libc"] }
 
 [build-dependencies]
 bindgen = "0.70.1"
