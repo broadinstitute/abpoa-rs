@@ -20,6 +20,8 @@ jobs:
           fetch-depth: 0
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
       - name: Run release-plz
         uses: MarcoIeni/release-plz-action@v0.5
         env:
