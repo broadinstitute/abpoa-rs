@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::error::Error;
 use std::ffi::c_void;
 use std::fmt::{self, Display};
 use std::marker::PhantomData;
-
+use std::path::Path;
+use std::sync::LazyLock;
 
 mod ffi {
     #![allow(non_upper_case_globals)]
@@ -10,58 +11,84 @@ mod ffi {
     #![allow(non_snake_case)]
     #![allow(dead_code)]
 
-
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-    
+
     // Define pointer to static char arrays defined in abPOA (align_seq.c)
     // Use a trick found at: https://github.com/rust-lang/rust/issues/54450
     // See https://play.rust-lang.org/?version=stable&mode=debug&edition=2015&gist=f67a2476f7743d87225e69ae6efd2910
     pub struct ExternPtr<T>(*const T);
     unsafe impl<T> Sync for ExternPtr<T> {}
-    
+
     impl<T> ExternPtr<T> {
         pub fn as_ptr(&self) -> *const T {
             self.0
         }
     }
-    
+
     /// Transforms AaCcGgTtNn to 0-4
     pub static AB_NT4_TABLE: ExternPtr<u8> = {
         extern "C" {
-            #[link_name="ab_nt4_table"]
+            #[link_name = "ab_nt4_table"]
             static inner: u8;
         }
         ExternPtr(unsafe { &inner as *const u8 })
     };
-    
+
     /// Transforms 65,97=>A, 67,99=>C, 71,103=>G, 84,85,116,117=>T, else=>N
     pub static AB_NT256_TABLE: ExternPtr<u8> = {
         extern "C" {
-            #[link_name="ab_nt256_table"]
+            #[link_name = "ab_nt256_table"]
             static inner: u8;
         }
         ExternPtr(unsafe { &inner as *const u8 })
     };
-    
+
     /// Transforms amino acids to 0-25
     pub static AB_AA26_TABLE: ExternPtr<u8> = {
         extern "C" {
-            #[link_name="ab_aa26_table"]
+            #[link_name = "ab_aa26_table"]
             static inner: u8;
         }
         ExternPtr(unsafe { &inner as *const u8 })
     };
-    
+
     /// Transforms 0-25 to amino acids
     pub static AB_AA256_TABLE: ExternPtr<u8> = {
         extern "C" {
-            #[link_name="ab_aa26_table"]
+            #[link_name = "ab_aa26_table"]
             static inner: u8;
         }
         ExternPtr(unsafe { &inner as *const u8 })
     };
-    
+
+    /// Pre-computed ilog2 for [0-2^16)
+    pub static AB_LOG_TABLE_65536: ExternPtr<u8> = {
+        extern "C" {
+            #[link_name = "ab_LogTable65536"]
+            static inner: u8;
+        }
+        ExternPtr(unsafe { &inner as *const u8 })
+    };
+
+    /// Pre-computed bit flag table (16 bit)
+    pub static AB_BIT_TABLE_16: ExternPtr<u8> = {
+        extern "C" {
+            #[link_name = "ab_bit_table16"]
+            static inner: u8;
+        }
+        ExternPtr(unsafe { &inner as *const u8 })
+    };
 }
+
+pub static LOG_TABLE65536: LazyLock<&'static [u8]> = LazyLock::new(|| unsafe {
+    let ptr = ffi::AB_LOG_TABLE_65536.as_ptr();
+    std::slice::from_raw_parts(ptr, 65536)
+});
+
+pub static BIT_TABLE16: LazyLock<&'static [u8]> = LazyLock::new(|| unsafe {
+    let ptr = ffi::AB_BIT_TABLE_16.as_ptr();
+    std::slice::from_raw_parts(ptr, 65536)
+});
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 #[repr(u32)]
@@ -134,6 +161,10 @@ pub struct AlignmentParametersBuilder {
 impl AlignmentParametersBuilder {
     pub fn new() -> Self {
         let abpoa_params = unsafe { ffi::abpoa_init_para() };
+        unsafe {
+            (*abpoa_params).set_out_msa(1);
+            (*abpoa_params).set_out_cons(1);
+        }
         AlignmentParametersBuilder { abpoa_params }
     }
 
@@ -233,35 +264,10 @@ impl AlignmentParametersBuilder {
         let matrix_size: usize = if v { 27 } else { 5 };
         unsafe {
             (*self.abpoa_params).m = matrix_size as i32;
-            (*self.abpoa_params).mat =
-                libc::realloc(
-                    (*self.abpoa_params).mat as *mut libc::c_void, 
-                    matrix_size * matrix_size * std::mem::size_of::<i32>()
-                ) as *mut i32;
-        }
-
-        self
-    }
-
-    pub fn consensus_algorithm(self, algorithm: ConsensusAlgorithm) -> Self {
-        unsafe {
-            (*self.abpoa_params).cons_algrm = algorithm as i32;
-        }
-
-        self
-    }
-
-    pub fn max_number_of_consensus_sequences(self, n: i32) -> Self {
-        unsafe {
-            (*self.abpoa_params).max_n_cons = n;
-        }
-
-        self
-    }
-
-    pub fn min_consensus_frequency(self, f: f64) -> Self {
-        unsafe {
-            (*self.abpoa_params).min_freq = f;
+            (*self.abpoa_params).mat = libc::realloc(
+                (*self.abpoa_params).mat as *mut libc::c_void,
+                matrix_size * matrix_size * std::mem::size_of::<i32>(),
+            ) as *mut i32;
         }
 
         self
@@ -298,33 +304,76 @@ impl AlignmentParametersBuilder {
     /// Runs some post processing on the paramaters, and initializes additional scoring matrices.
     pub fn build(mut self) -> AlignmentParameters {
         unsafe { ffi::abpoa_post_set_para(self.abpoa_params) }
-        
+
         let table = unsafe {
-             if (*self.abpoa_params).m > 5 {
+            if (*self.abpoa_params).m > 5 {
                 std::slice::from_raw_parts(ffi::AB_AA26_TABLE.as_ptr(), 256)
             } else {
                 std::slice::from_raw_parts(ffi::AB_NT4_TABLE.as_ptr(), 256)
             }
         };
-        
+
         let rev_table = unsafe {
             if (*self.abpoa_params).m > 5 {
-               std::slice::from_raw_parts(ffi::AB_AA256_TABLE.as_ptr(), 256)
-           } else {
-               std::slice::from_raw_parts(ffi::AB_NT256_TABLE.as_ptr(), 256)
-           }
+                std::slice::from_raw_parts(ffi::AB_AA256_TABLE.as_ptr(), 256)
+            } else {
+                std::slice::from_raw_parts(ffi::AB_NT256_TABLE.as_ptr(), 256)
+            }
         };
+
+        LazyLock::force(&LOG_TABLE65536);
+        LazyLock::force(&BIT_TABLE16);
 
         let to_return = AlignmentParameters {
             abpoa_params: self.abpoa_params,
             table,
-            rev_table
+            rev_table,
         };
 
         // Set our current parameters to null so we don't double free them (see Drop impl below)
         self.abpoa_params = std::ptr::null_mut();
 
         to_return
+    }
+
+    fn output_msa(self, v: bool) -> Self {
+        unsafe {
+            (*self.abpoa_params).set_out_msa(v as u8);
+        }
+
+        self
+    }
+
+    fn output_consensus(self, v: bool) -> Self {
+        unsafe {
+            (*self.abpoa_params).set_out_cons(v as u8);
+        }
+
+        self
+    }
+
+    fn consensus_algorithm(self, algorithm: ConsensusAlgorithm) -> Self {
+        unsafe {
+            (*self.abpoa_params).cons_algrm = algorithm as i32;
+        }
+
+        self
+    }
+
+    fn max_number_of_consensus_sequences(self, n: i32) -> Self {
+        unsafe {
+            (*self.abpoa_params).max_n_cons = n;
+        }
+
+        self
+    }
+
+    fn min_consensus_frequency(self, f: f64) -> Self {
+        unsafe {
+            (*self.abpoa_params).min_freq = f;
+        }
+
+        self
     }
 }
 
@@ -351,18 +400,29 @@ pub struct AlignmentParameters {
 }
 
 impl AlignmentParameters {
+    pub fn alphabet_size(&self) -> usize {
+        unsafe { (*self.abpoa_params).m as usize }
+    }
+
+    pub fn uses_amino_acids(&self) -> bool {
+        self.alphabet_size() > 5
+    }
+
     pub fn transform_seq(&self, seq: &[u8]) -> Vec<u8> {
         seq.iter().map(|&x| self.table[x as usize]).collect()
     }
-    
+
     pub fn reverse_seq(&self, transformed: &[u8]) -> Vec<u8> {
-        transformed.iter().map(|&x| self.rev_table[x as usize]).collect()
+        transformed
+            .iter()
+            .map(|&x| self.rev_table[x as usize])
+            .collect()
     }
-    
+
     pub fn transform_base(&self, base: u8) -> u8 {
         self.table[base as usize]
     }
-    
+
     pub fn reverse_base(&self, code: u8) -> u8 {
         self.rev_table[code as usize]
     }
@@ -384,9 +444,30 @@ impl Default for AlignmentParameters {
     }
 }
 
+/// An enum representing various error conditions that can occur during alignment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AbpoaError {
+    /// The alphabet used in the sequence does not match the graph
+    InvalidAlphabet,
+}
+
+impl Error for AbpoaError {}
+
+impl fmt::Display for AbpoaError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            AbpoaError::InvalidAlphabet => write!(
+                f,
+                "The alphabet used in the sequence does not match the graph"
+            ),
+        }
+    }
+}
+
 /// The multiple sequence alignment POA graph
 pub struct Graph {
     graph_impl: *mut ffi::abpoa_t,
+    use_amino_acids: bool,
 }
 
 impl Graph {
@@ -394,45 +475,56 @@ impl Graph {
         let graph_impl = unsafe { ffi::abpoa_init() };
         unsafe { ffi::abpoa_reset(graph_impl, aln_params.abpoa_params, 1024) }
 
-        Graph { graph_impl }
+        Graph {
+            graph_impl,
+            use_amino_acids: aln_params.uses_amino_acids(),
+        }
     }
 
     /// Load a graph from a file.
     ///
-    /// The function always succeeds. If the file could not be read, it will return an empty graph.
-    /// This function will discard any existing read IDs in the FASTA or GFA. To retain the existing
-    /// read IDs, use [`from_file_with_read_ids`].
-    pub fn from_file(fname: &Path) -> Self {
+    /// The function always succeeds. If the file could not be read, it will return an empty graph. Existing
+    /// read IDs in the FASTA or GFA will be retained.
+    pub fn from_file(fname: &Path, use_amino_acids: bool) -> Self {
         let graph_impl = unsafe { ffi::abpoa_init() };
 
         let aln_params = AlignmentParametersBuilder::new()
             .existing_graph_fname(fname)
+            .use_amino_acids(use_amino_acids)
             .build();
 
         unsafe {
             ffi::abpoa_restore_graph(graph_impl, aln_params.abpoa_params);
         }
 
-        Graph { graph_impl }
+        Graph {
+            graph_impl,
+            use_amino_acids,
+        }
     }
 
     /// Load a graph from a file.
     ///
     /// The function always succeeds. If the file could not be read, it will return an empty graph.
-    /// This function will retain any existing read IDs in the FASTA or GFA.
-    pub fn from_file_with_read_ids(fname: &Path) -> Self {
+    /// This function will ignore read IDs in the FASTA or GFA, and use internally generated read IDs. To
+    /// retain the existing read IDs, use [`from_file`].
+    pub fn from_file_with_read_ids(fname: &Path, use_amino_acids: bool) -> Self {
         let graph_impl = unsafe { ffi::abpoa_init() };
 
         let aln_params = AlignmentParametersBuilder::new()
             .existing_graph_fname(fname)
             .use_read_ids(true)
+            .use_amino_acids(use_amino_acids)
             .build();
 
         unsafe {
             ffi::abpoa_restore_graph(graph_impl, aln_params.abpoa_params);
         }
 
-        Graph { graph_impl }
+        Graph {
+            graph_impl,
+            use_amino_acids,
+        }
     }
 
     pub fn sequences(&self) -> Sequences<'_> {
@@ -443,12 +535,24 @@ impl Graph {
         unsafe { (*self.graph_impl).abg }
     }
 
+    fn get_graph_ptr_mut(&mut self) -> *mut ffi::abpoa_graph_t {
+        unsafe { (*self.graph_impl).abg }
+    }
+
     fn get_abs_ptr(&self) -> *const ffi::abpoa_seq_t {
         unsafe { (*self.graph_impl).abs }
     }
 
     fn get_abs_ptr_mut(&mut self) -> *mut ffi::abpoa_seq_t {
         unsafe { (*self.graph_impl).abs }
+    }
+
+    fn get_cons_ptr(&self) -> *const ffi::abpoa_cons_t {
+        unsafe { (*self.graph_impl).abc }
+    }
+
+    fn get_cons_ptr_mut(&self) -> *mut ffi::abpoa_cons_t {
+        unsafe { (*self.graph_impl).abc }
     }
 
     pub fn num_nodes(&self) -> usize {
@@ -479,13 +583,21 @@ impl Graph {
         }
     }
 
+    pub fn has_consensus(&self) -> bool {
+        unsafe { (*self.get_graph_ptr()).is_called_cons() > 0 && !self.get_cons_ptr().is_null() }
+    }
+
     pub fn align_and_add_sequence(
         &mut self,
         aln_params: &AlignmentParameters,
         sequence: &[u8],
         weights: &[i32],
         name: &[u8],
-    ) -> AlignmentResult {
+    ) -> Result<AlignmentResult, AbpoaError> {
+        if aln_params.uses_amino_acids() != self.use_amino_acids {
+            return Err(AbpoaError::InvalidAlphabet);
+        }
+
         let num_existing_seq = self.num_sequences();
 
         // Make space for the new sequence
@@ -496,7 +608,7 @@ impl Graph {
             let target = (*self.get_abs_ptr()).name.add(num_existing_seq);
             ffi::abpoa_cpy_str(target, name.as_ptr() as *mut i8, name.len() as i32)
         }
-        
+
         let transformed_seq = aln_params.transform_seq(sequence);
 
         // Perform alignment
@@ -526,13 +638,110 @@ impl Graph {
             );
         }
 
-        result
+        Ok(result)
     }
 
     fn prepare_for_new_sequences(&mut self, num_new_sequences: usize) {
         unsafe {
             (*self.get_abs_ptr_mut()).n_seq += num_new_sequences as i32;
             ffi::abpoa_realloc_seq(self.get_abs_ptr_mut());
+        }
+    }
+
+    pub fn generate_consensus(&mut self, alg: ConsensusAlgorithm) {
+        let cons_aln_params = AlignmentParametersBuilder::new()
+            .output_consensus(true)
+            .consensus_algorithm(alg)
+            .use_amino_acids(self.use_amino_acids)
+            .build();
+
+        if alg == ConsensusAlgorithm::Majority {
+            self.alloc_node_msa_rank();
+        }
+
+        unsafe {
+            ffi::abpoa_generate_consensus(self.graph_impl, cons_aln_params.abpoa_params);
+        }
+    }
+
+    pub fn force_generate_consensus(&mut self, alg: ConsensusAlgorithm) {
+        unsafe {
+            (*self.get_graph_ptr_mut()).set_is_called_cons(0);
+        }
+
+        self.generate_consensus(alg)
+    }
+
+    pub fn generate_consensus_multiple(
+        &mut self,
+        alg: ConsensusAlgorithm,
+        max_consensus: usize,
+        min_freq: Option<f64>,
+    ) {
+        let cons_aln_params = AlignmentParametersBuilder::new()
+            .output_consensus(true)
+            .consensus_algorithm(alg)
+            .use_amino_acids(self.use_amino_acids)
+            .max_number_of_consensus_sequences(max_consensus as i32)
+            .min_consensus_frequency(min_freq.unwrap_or(0.25))
+            .build();
+
+        self.alloc_node_msa_rank();
+        unsafe {
+            ffi::abpoa_generate_consensus(self.graph_impl, cons_aln_params.abpoa_params);
+        }
+    }
+
+    pub fn force_generate_consensus_multiple(
+        &mut self,
+        alg: ConsensusAlgorithm,
+        max_consensus: usize,
+        min_freq: Option<f64>,
+    ) {
+        unsafe {
+            (*self.get_graph_ptr_mut()).set_is_called_cons(0);
+        }
+
+        self.generate_consensus_multiple(alg, max_consensus, min_freq)
+    }
+
+    pub fn generate_rc_msa(&mut self) {
+        let aln_params = AlignmentParametersBuilder::new()
+            .output_msa(true)
+            .output_consensus(self.has_consensus())
+            .use_amino_acids(self.use_amino_acids)
+            .build();
+
+        self.alloc_node_msa_rank();
+
+        unsafe {
+            ffi::abpoa_generate_rc_msa(self.graph_impl, aln_params.abpoa_params);
+        }
+    }
+
+    pub fn get_consensus(&self) -> Option<ConsensusData<'_>> {
+        if self.has_consensus() {
+            Some(ConsensusData::new(self))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_msa(&self) -> MSAData<'_> {
+        MSAData::new(self)
+    }
+
+    fn alloc_node_msa_rank(&mut self) {
+        let graph_ptr = self.get_graph_ptr_mut();
+        unsafe {
+            (*graph_ptr).node_id_to_msa_rank = libc::realloc(
+                (*graph_ptr).node_id_to_msa_rank as *mut libc::c_void,
+                (*graph_ptr).index_rank_m as usize * std::mem::size_of::<i32>(),
+            ) as *mut i32;
+
+            if (*graph_ptr).node_id_to_msa_rank.is_null() {
+                panic!("Failed to allocate memory for node_id_to_msa_rank");
+            }
         }
     }
 }
@@ -920,7 +1129,12 @@ impl AlignmentResult {
         self.result_impl.n_matched_bases as usize
     }
 
-    pub fn print_alignment(&self, aln_params: &AlignmentParameters, graph: &Graph, sequence: &[u8]) {
+    pub fn print_alignment(
+        &self,
+        aln_params: &AlignmentParameters,
+        graph: &Graph,
+        sequence: &[u8],
+    ) {
         let mut graph_bases = Vec::with_capacity(self.get_num_aligned());
         let mut aln_symbols = Vec::with_capacity(self.get_num_aligned());
         let mut qry_bases = Vec::with_capacity(self.get_num_aligned());
@@ -934,7 +1148,8 @@ impl AlignmentResult {
 
             match op {
                 CigarOp::Match | CigarOp::Mismatch => {
-                    let is_match = aln_params.reverse_base(graph.get_node(node_id).get_base()) == sequence[query_id];
+                    let is_match = aln_params.reverse_base(graph.get_node(node_id).get_base())
+                        == sequence[query_id];
                     graph_bases.push(aln_params.reverse_base(graph.get_node(node_id).get_base()));
                     aln_symbols.push(if is_match { b'|' } else { b'.' });
                     qry_bases.push(sequence[query_id]);
@@ -979,6 +1194,84 @@ impl Drop for AlignmentResult {
     }
 }
 
+pub struct ConsensusData<'a> {
+    consensus_data_impl: *const ffi::abpoa_cons_t,
+    seq: Vec<&'a [u8]>,
+}
+
+impl<'a> ConsensusData<'a> {
+    fn new(graph: &'a Graph) -> Self {
+        let cons_ptr = graph.get_cons_ptr();
+        let num_seq = unsafe { (*cons_ptr).n_cons as usize };
+
+        let seqs = (0..num_seq)
+            .map(|i| {
+                let len = unsafe { (*cons_ptr).cons_len.add(i) };
+                unsafe { std::slice::from_raw_parts(*(*cons_ptr).cons_base.add(i), *len as usize) }
+            })
+            .collect();
+
+        ConsensusData {
+            consensus_data_impl: graph.get_cons_ptr(),
+            seq: seqs,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        unsafe { (*self.consensus_data_impl).n_cons as usize }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn consensus_lengths(&self) -> &[i32] {
+        unsafe { std::slice::from_raw_parts((*self.consensus_data_impl).cons_len, self.len()) }
+    }
+
+    pub fn sequences(&self) -> &[&[u8]] {
+        &self.seq
+    }
+}
+
+pub struct MSAData<'a> {
+    consensus_data_impl: *const ffi::abpoa_cons_t,
+    alignments: Vec<&'a [u8]>,
+}
+
+impl<'a> MSAData<'a> {
+    fn new(graph: &'a Graph) -> Self {
+        let cons_ptr = graph.get_cons_ptr();
+        let num_seq = unsafe { (*cons_ptr).n_seq as usize + (*cons_ptr).n_cons as usize };
+        let msa_len = unsafe { (*cons_ptr).msa_len as usize };
+
+        let alignments = (0..num_seq)
+            .map(|i| unsafe { std::slice::from_raw_parts(*(*cons_ptr).msa_base.add(i), msa_len) })
+            .collect();
+
+        MSAData {
+            consensus_data_impl: graph.get_cons_ptr(),
+            alignments,
+        }
+    }
+
+    pub fn includes_consesus(&self) -> bool {
+        unsafe { (*self.consensus_data_impl).n_cons > 0 }
+    }
+
+    pub fn len(&self) -> usize {
+        unsafe { (*self.consensus_data_impl).n_seq as usize }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn sequences(&self) -> &[&[u8]] {
+        &self.alignments
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1005,7 +1298,7 @@ mod tests {
     #[test]
     fn test_node_ref() {
         let aln_params = AlignmentParametersBuilder::new()
-            .verbosity(Verbosity::Debug)
+            .verbosity(Verbosity::None)
             .build();
 
         let mut graph = Graph::new(&aln_params);
@@ -1014,7 +1307,9 @@ mod tests {
         let sequence = b"CGTACGTACTGACGTACGATCGTACTGACGTCGTCA";
         let weights = vec![1; sequence.len()];
 
-        let result = graph.align_and_add_sequence(&aln_params, sequence, &weights, b"seq1");
+        let result = graph
+            .align_and_add_sequence(&aln_params, sequence, &weights, b"seq1")
+            .unwrap();
         assert_eq!(result.get_best_score(), 0);
 
         for (i, orig_base) in sequence.iter().enumerate() {
@@ -1027,7 +1322,7 @@ mod tests {
     #[test]
     fn test_graph_from_file() {
         let test_fname = PathBuf::from("tests/data/small_test.truth.fa");
-        let graph = Graph::from_file(&test_fname);
+        let graph = Graph::from_file(&test_fname, false);
 
         assert_eq!(graph.num_sequences(), 3);
         assert_eq!(graph.sequences().names(), &[b"seq1", b"seq2", b"seq3"]);
@@ -1045,33 +1340,86 @@ mod tests {
         assert_eq!(graph.num_nodes(), 2); // Includes the special source and sink nodes
         assert_eq!(graph.num_sequences(), 0);
 
-        eprintln!("Seq 1");
         let sequence = b"CGTACGTACTGACGTACGATCGTACTGACGTCGTCA";
         let weights = vec![1; sequence.len()];
 
-        let result = graph.align_and_add_sequence(&aln_params, sequence, &weights, b"seq1");
-        result.print_alignment(&aln_params, &graph, sequence);
+        let result = graph
+            .align_and_add_sequence(&aln_params, sequence, &weights, b"seq1")
+            .unwrap();
         assert_eq!(result.get_best_score(), 0);
         assert_eq!(graph.num_nodes(), 2 + sequence.len());
         assert_eq!(graph.num_sequences(), 1);
-        
-        eprintln!("Test sequences: {:?}", graph.sequences().names());
 
-        eprintln!("Seq 2");
         let sequence2 = b"CGTACGTACTGACGTTTGATCGTACTGACGTCGTCA";
         let weights2 = vec![1; sequence2.len()];
 
-        let result2 = graph.align_and_add_sequence(&aln_params, sequence2, &weights2, b"seq2");
-        result2.print_alignment(&aln_params, &graph, sequence);
+        let result2 = graph
+            .align_and_add_sequence(&aln_params, sequence2, &weights2, b"seq2")
+            .unwrap();
 
-        eprintln!(
-            "{:?} {:?} {:?}",
-            result2.get_best_score(),
-            result2.get_num_aligned(),
-            result2.get_num_matches()
-        );
-        // assert_eq!(result2.get_best_score(), 60);
+        assert_eq!(result2.get_best_score(), -8);
         assert_eq!(result2.get_num_matches(), sequence2.len() - 2);
         assert_eq!(graph.num_nodes(), 2 + sequence.len() + 2);
+    }
+
+    #[test]
+    fn test_consensus_generation() {
+        let aln_params = AlignmentParametersBuilder::new()
+            .alignment_mode(AlignmentMode::Global)
+            .gap_affine_penalties(0, 4, 6, 2)
+            .verbosity(Verbosity::None)
+            .build();
+
+        let mut graph =
+            Graph::from_file(&PathBuf::from("tests/data/test_from_abpoa.truth.fa"), false);
+
+        graph.generate_consensus(ConsensusAlgorithm::HeaviestBundle);
+
+        let consensus = graph.get_consensus().unwrap();
+        let truth = aln_params.transform_seq(b"ACGTGTACAGTTGAC");
+
+        assert_eq!(consensus.len(), 1);
+        assert_eq!(consensus.sequences(), &[&truth]);
+    }
+
+    #[test]
+    fn test_msa_generation() {
+        let aln_params = AlignmentParametersBuilder::new()
+            .alignment_mode(AlignmentMode::Global)
+            .gap_affine_penalties(0, 4, 6, 2)
+            .verbosity(Verbosity::None)
+            .build();
+
+        let mut graph = Graph::new(&aln_params);
+
+        let test_seq: Vec<&[u8]> = vec![
+            b"ACGTGTACAGTTGAC",
+            b"AGGTACACGTTAC",
+            b"AGTGTCACGTTGAC",
+            b"ACGTGTACATTGAC",
+        ];
+
+        for (i, seq) in test_seq.iter().enumerate() {
+            let weights = vec![1; seq.len()];
+            graph
+                .align_and_add_sequence(&aln_params, seq, &weights, format!("{}", i + 1).as_bytes())
+                .unwrap();
+        }
+
+        graph.generate_rc_msa();
+        let msa = graph.get_msa();
+        assert_eq!(msa.len(), 4);
+        
+        let truth = [
+            b"ACGTGTACAGTTGAC",
+            b"A--GGTACACGTTAC",
+            b"A-GTGTCACGTTGAC",
+            b"ACGTGTACA-TTGAC",
+        ];
+        
+        for (i, seq) in msa.sequences().iter().enumerate() {
+            let ascii = aln_params.reverse_seq(seq);
+            assert_eq!(&ascii, truth[i]);
+        }
     }
 }

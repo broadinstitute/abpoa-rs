@@ -56,6 +56,7 @@ fn main() {
         // bindings for.
         .header("abPOA/include/abpoa.h")
         .header("abPOA/src/abpoa_seq.h")
+        .header("abPOA/src/abpoa_output.h")
         .clang_args(&compiler_args)
         // Hide SIMD(e) aliases and types, don't work well with bindgen
         .opaque_type("abpoa_simd_matrix_t")
