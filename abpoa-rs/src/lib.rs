@@ -434,7 +434,7 @@ impl Graph {
     ///
     /// The function always succeeds. If the file could not be read, it will return an empty graph.
     /// This function will ignore read IDs in the FASTA or GFA, and use internally generated read IDs. To
-    /// retain the existing read IDs, use [`from_file`].
+    /// retain the existing read IDs, use [`Graph::from_file`].
     pub fn from_file_with_read_ids(fname: &Path, use_amino_acids: bool) -> Self {
         let graph_impl = unsafe { ffi::abpoa_init() };
 
@@ -513,8 +513,8 @@ impl Graph {
     pub fn has_consensus(&self) -> bool {
         unsafe { (*self.get_graph_ptr()).is_called_cons() > 0 && !self.get_cons_ptr().is_null() }
     }
-
-    pub fn align_and_add_sequence(
+    
+    fn align_sequence_coded(
         &mut self,
         aln_params: &AlignmentParameters,
         sequence: &[u8],
@@ -536,20 +536,43 @@ impl Graph {
             ffi::abpoa_cpy_str(target, name.as_ptr() as *mut i8, name.len() as i32)
         }
 
-        let transformed_seq = aln_params.transform_seq(sequence);
-
         // Perform alignment
         let mut result = AlignmentResult::new();
         unsafe {
             ffi::abpoa_align_sequence_to_graph(
                 self.graph_impl,
                 aln_params.abpoa_params,
-                transformed_seq.as_ptr() as *mut u8,
+                sequence.as_ptr() as *mut u8,
                 sequence.len() as i32,
                 result.as_mut_ptr(),
             );
         }
 
+        Ok(aln_result)
+    }
+    
+    pub fn align_sequence(
+        &mut self,
+        aln_params: &AlignmentParameters,
+        sequence: &[u8],
+        weights: &[i32],
+        name: &[u8],
+    ) -> Result<AlignmentResult, AbpoaError> {
+        let transformed_seq = aln_params.transform_sequence(sequence);
+        self.align_sequence_coded(aln_params, &transformed_seq, &weights, name)
+    }
+
+    pub fn align_and_add_sequence(
+        &mut self,
+        aln_params: &AlignmentParameters,
+        sequence: &[u8],
+        weights: &[i32],
+        name: &[u8],
+    ) -> Result<AlignmentResult, AbpoaError> {
+        let transformed_seq = aln_params.transform_seq(sequence);
+        let result = self.align_sequence_coded(aln_params, &transformed_seq, weights, name)?;
+
+        let num_existing_seq = self.num_sequences();
         unsafe {
             ffi::abpoa_add_graph_alignment(
                 self.graph_impl,
