@@ -58,7 +58,7 @@ let aln_params = AlignmentParametersBuilder::new()
     .verbosity(Verbosity::None)
     .build();
 
-// Create a new emoty POA graph
+// Create a new empty POA graph
 let mut graph = Graph::new(&aln_params);
 
 let test_seq: Vec<&[u8]> = vec![
