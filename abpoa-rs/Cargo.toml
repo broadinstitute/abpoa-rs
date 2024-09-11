@@ -13,5 +13,4 @@ categories = ["science::bioinformatics", "science::bioinformatics::genomics", "s
 
 [dependencies]
 libc = "0.2.158"
-abpoa-sys = { path = "../abpoa-sys" }
-
+abpoa-sys = { path = "../abpoa-sys", version = "0.1.0" }
