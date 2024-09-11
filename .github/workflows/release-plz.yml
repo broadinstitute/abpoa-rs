@@ -29,7 +29,11 @@ jobs:
           repo-name: llvm-repo
           keys-asc: https://apt.llvm.org/llvm-snapshot.gpg.key
       - name: Install LLVM
-        run: sudo apt-get purge clang-14 && sudo apt-get install llvm-18 llvm-18-dev llvm-18-runtime clang-18 clang-tools-18 lld-18 libpolly-18-dev libmlir-18-dev mlir-18-tools
+        run: |
+          sudo apt-get purge -y '^llvm-.*'
+          sudo apt-get purge -y '^clang-.*'
+          sudo apt-get install llvm-18 llvm-18-dev llvm-18-runtime \
+            clang-18 clang-tools-18 lld-18
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
       - name: Run release-plz
