@@ -21,10 +21,15 @@ jobs:
           submodules: 'recursive'
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
+      - uses: Swatinem/rust-cache@v2
+      - name: add llvm deb repository
+        uses: myci-actions/add-deb-repo@11
         with:
-          version: "18.0"
+          repo: deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main
+          repo-name: llvm-repo
+          keys-asc: https://apt.llvm.org/llvm-snapshot.gpg.key
+      - name: Install LLVM
+        run: sudo apt-get install llvm-18 llvm-18-dev llvm-18-runtime clang-18 clang-tools-18 lld-18 libpolly-18-dev libmlir-18-dev mlir-18-tools
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
       - name: Run release-plz
