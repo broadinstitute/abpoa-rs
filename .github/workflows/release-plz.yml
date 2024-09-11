@@ -21,6 +21,10 @@ jobs:
           submodules: 'recursive'
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "18.0"
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
       - name: Run release-plz
