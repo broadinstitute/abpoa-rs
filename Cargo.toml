@@ -14,9 +14,9 @@ include = [
     "abPOA/include",
     "abPOA/src",
     "abPOA/Makefile",
-    "build.rs",
     "src/",
-    "tests/"
+    "build.rs",
+    "Cargo.toml"
 ]
 links = "abpoa"
 
