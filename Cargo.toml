@@ -11,13 +11,15 @@ keywords = ["bioinformatics", "sequence-alignment", "graph-alignment", "POA"]
 categories = ["science::bioinformatics", "science::bioinformatics::genomics", "science::bioinformatics::sequence-analysis"]
 
 include = [
-    "abPOA/include",
+    "abPOA/include/*.h",
+    "abPOA/include/simde/simde/**/*.h",
     "abPOA/src",
     "abPOA/Makefile",
     "src/",
     "build.rs",
     "Cargo.toml"
 ]
+
 links = "abpoa"
 
 [dependencies]
