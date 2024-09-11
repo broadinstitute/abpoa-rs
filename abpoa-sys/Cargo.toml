@@ -1,0 +1,32 @@
+[package]
+name = "abpoa-sys"
+description = "Automatically generated FFI definitions for abPOA"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/broadinstitute/abpoa-rs"
+readme = "../README.md"
+keywords = ["bioinformatics", "sequence-alignment", "graph-alignment", "POA"]
+categories = ["science::bioinformatics", "science::bioinformatics::genomics", "science::bioinformatics::sequence-analysis"]
+
+links = "abpoa"
+
+include = [
+    "abPOA/include/*.h",
+    "abPOA/include/simde/simde/**/*.h",
+    "abPOA/src",
+    "abPOA/Makefile",
+    "src/",
+    "build.rs",
+    "Cargo.toml"
+]
+
+[dependencies]
+libz-sys = { version = "1.1", default-features = false, features = ["libc"] }
+
+
+[build-dependencies]
+bindgen = "0.70.1"
+cc = "1.1.15"
+glob = "0.3.1"

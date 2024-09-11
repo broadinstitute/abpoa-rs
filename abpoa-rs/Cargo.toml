@@ -1,0 +1,17 @@
+[package]
+name = "abpoa-rs"
+description = "Rust bindings for abPOA: Adaptive Banded POA"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/broadinstitute/abpoa-rs"
+readme = "../README.md"
+keywords = ["bioinformatics", "sequence-alignment", "graph-alignment", "POA"]
+categories = ["science::bioinformatics", "science::bioinformatics::genomics", "science::bioinformatics::sequence-analysis"]
+
+
+[dependencies]
+libc = "0.2.158"
+abpoa-sys = { path = "../abpoa-sys" }
+
