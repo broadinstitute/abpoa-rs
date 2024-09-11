@@ -71,9 +71,11 @@ let test_seq: Vec<&[u8]> = vec![
 // Align and add each sequence to the graph
 for (i, seq) in test_seq.iter().enumerate() {
     let weights = vec![1; seq.len()];
-    graph
+    let result = graph
         .align_and_add_sequence(&aln_params, seq, &weights, format!("seq{}", i + 1).as_bytes())
         .unwrap();
+    
+    eprintln!("Sequence {}: score = {}", i + 1, result.get_best_score());
 }
 
 // Compute the row-column MSA output
@@ -98,7 +100,7 @@ for (i, seq) in msa.sequences().iter().enumerate() {
 graph.generate_consensus(ConsensusAlgorithm::HeaviestBundle);
 
 let consensus = graph.get_consensus().unwrap();
-let ascii = aln_params.reverse_seq(consensus.sequence());
+let ascii = aln_params.reverse_seq(consensus.sequences().iter().next().unwrap());
 
 eprintln!("Consensus: {}", std::str::from_utf8(ascii).unwrap());
 ```
