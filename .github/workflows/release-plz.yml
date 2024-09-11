@@ -34,8 +34,8 @@ jobs:
           sudo apt-get purge -y '^clang-.*'
           sudo apt-get install llvm-18 llvm-18-dev llvm-18-runtime \
             clang-18 clang-tools-18 lld-18
-      - name: Check semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks
       - name: Run release-plz
         uses: MarcoIeni/release-plz-action@v0.5
         env:
