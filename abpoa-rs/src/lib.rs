@@ -520,7 +520,7 @@ impl Graph {
         sequence: &[u8],
         weights: &[i32],
         name: &[u8],
-    ) -> Result<AlignmentResult, AbpoaError> {
+    ) -> Result<(usize, AlignmentResult), AbpoaError> {
         if aln_params.uses_amino_acids() != self.use_amino_acids {
             return Err(AbpoaError::InvalidAlphabet);
         }
@@ -548,7 +548,7 @@ impl Graph {
             );
         }
 
-        Ok(aln_result)
+        Ok((num_existing_seq, result))
     }
     
     pub fn align_sequence(
@@ -558,8 +558,10 @@ impl Graph {
         weights: &[i32],
         name: &[u8],
     ) -> Result<AlignmentResult, AbpoaError> {
-        let transformed_seq = aln_params.transform_sequence(sequence);
-        self.align_sequence_coded(aln_params, &transformed_seq, &weights, name)
+        let transformed_seq = aln_params.transform_seq(sequence);
+        let (_, result) = self.align_sequence_coded(aln_params, &transformed_seq, &weights, name)?;
+        
+        Ok(result)
     }
 
     pub fn align_and_add_sequence(
@@ -570,9 +572,8 @@ impl Graph {
         name: &[u8],
     ) -> Result<AlignmentResult, AbpoaError> {
         let transformed_seq = aln_params.transform_seq(sequence);
-        let result = self.align_sequence_coded(aln_params, &transformed_seq, weights, name)?;
+        let (num_existing_seq, result) = self.align_sequence_coded(aln_params, &transformed_seq, weights, name)?;
 
-        let num_existing_seq = self.num_sequences();
         unsafe {
             ffi::abpoa_add_graph_alignment(
                 self.graph_impl,
@@ -1356,6 +1357,7 @@ mod tests {
                 .unwrap();
         }
 
+        eprintln!("Generate MSA");
         graph.generate_rc_msa();
         let msa = graph.get_msa();
         assert_eq!(msa.len(), 4);
