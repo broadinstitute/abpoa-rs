@@ -5,9 +5,11 @@
 
 ## Installation
 
-### Cargo package
+### Cargo
 
-TODO
+```bash
+cargo add abpoa-rs
+```
 
 ### Building from source
 
@@ -17,23 +19,23 @@ The minimum supported Rust version is 1.80.
 
 #### Building abPOA
 
-1. Clone the repository. 
+1. Clone the repository.
 
    ```bash
    git clone https://github.com/broadinstitute/abpoa-rs
    ```
-2. Move into the directory. 
+2. Move into the directory.
 
    ```bash
    cd abpoa-rs
    ```
-3. Build using `cargo`. We enable a flag to ensure the compiler uses all features of your machine's CPU. 
+3. Build using `cargo`. We enable a flag to ensure the compiler uses all features of your machine's CPU.
    To maximize portability of the binary, however, remove the `RUSTFLAGS="..."` part.
 
    ```bash
    RUSTFLAGS="-C target-cpu=native" cargo build --release
    ```
-   
+
 ## Supported features
 
 - [x] Global, local, and semi-global alignment
@@ -47,7 +49,7 @@ Features not yet supported:
 - [ ] "Strand ambiguous" alignment (on the roadmap)
 - [ ] Guide-tree supported alignment
 - [ ] Minimizer-based seeding and alignment
-   
+
 ## Usage
 
 ```rust
@@ -74,7 +76,7 @@ for (i, seq) in test_seq.iter().enumerate() {
     let result = graph
         .align_and_add_sequence(&aln_params, seq, &weights, format!("seq{}", i + 1).as_bytes())
         .unwrap();
-    
+
     eprintln!("Sequence {}: score = {}", i + 1, result.get_best_score());
 }
 
