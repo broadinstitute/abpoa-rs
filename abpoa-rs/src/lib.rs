@@ -376,6 +376,9 @@ impl Default for AlignmentParameters {
 pub enum AbpoaError {
     /// The alphabet used in the sequence does not match the graph
     InvalidAlphabet,
+    
+    /// The alignment input is incorrect
+    InvalidInput,
 }
 
 impl Error for AbpoaError {}
@@ -387,6 +390,7 @@ impl fmt::Display for AbpoaError {
                 f,
                 "The alphabet used in the sequence does not match the graph"
             ),
+            AbpoaError::InvalidInput => write!(f, "The alignment input is incorrect"),
         }
     }
 }
@@ -478,10 +482,6 @@ impl Graph {
         unsafe { (*self.graph_impl).abc }
     }
 
-    fn get_cons_ptr_mut(&self) -> *mut ffi::abpoa_cons_t {
-        unsafe { (*self.graph_impl).abc }
-    }
-
     pub fn num_nodes(&self) -> usize {
         unsafe { (*(*self.graph_impl).abg).node_n as usize }
     }
@@ -518,22 +518,9 @@ impl Graph {
         &mut self,
         aln_params: &AlignmentParameters,
         sequence: &[u8],
-        weights: &[i32],
-        name: &[u8],
-    ) -> Result<(usize, AlignmentResult), AbpoaError> {
+    ) -> Result<AlignmentResult, AbpoaError> {
         if aln_params.uses_amino_acids() != self.use_amino_acids {
             return Err(AbpoaError::InvalidAlphabet);
-        }
-
-        let num_existing_seq = self.num_sequences();
-
-        // Make space for the new sequence
-        self.prepare_for_new_sequences(1);
-
-        // Set new sequence name
-        unsafe {
-            let target = (*self.get_abs_ptr()).name.add(num_existing_seq);
-            ffi::abpoa_cpy_str(target, name.as_ptr() as *mut i8, name.len() as i32)
         }
 
         // Perform alignment
@@ -548,20 +535,43 @@ impl Graph {
             );
         }
 
-        Ok((num_existing_seq, result))
+        Ok(result)
     }
     
     pub fn align_sequence(
         &mut self,
         aln_params: &AlignmentParameters,
         sequence: &[u8],
-        weights: &[i32],
-        name: &[u8],
     ) -> Result<AlignmentResult, AbpoaError> {
         let transformed_seq = aln_params.transform_seq(sequence);
-        let (_, result) = self.align_sequence_coded(aln_params, &transformed_seq, &weights, name)?;
         
-        Ok(result)
+        self.align_sequence_coded(aln_params, &transformed_seq)
+    }
+    
+    pub fn add_alignment(
+        &mut self,
+        aln_params: &AlignmentParameters,
+        sequence: &[u8],
+        weights: &[i32],
+        name: &[u8],
+        aln_result: &AlignmentResult,
+    ) {
+        let (num_existing_seq, num_new) = self.prepare_for_new_sequences(&[name]);
+
+        unsafe {
+            ffi::abpoa_add_graph_alignment(
+                self.graph_impl,
+                aln_params.abpoa_params,
+                sequence.as_ptr() as *mut u8,
+                weights.as_ptr() as *mut i32,
+                sequence.len() as i32,
+                std::ptr::null_mut::<i32>(),
+                aln_result.result_impl,
+                num_existing_seq as i32,
+                (num_existing_seq + num_new) as i32,
+                1,
+            );
+        }
     }
 
     pub fn align_and_add_sequence(
@@ -572,31 +582,83 @@ impl Graph {
         name: &[u8],
     ) -> Result<AlignmentResult, AbpoaError> {
         let transformed_seq = aln_params.transform_seq(sequence);
-        let (num_existing_seq, result) = self.align_sequence_coded(aln_params, &transformed_seq, weights, name)?;
-
-        unsafe {
-            ffi::abpoa_add_graph_alignment(
-                self.graph_impl,
-                aln_params.abpoa_params,
-                transformed_seq.as_ptr() as *mut u8,
-                weights.as_ptr() as *mut i32,
-                sequence.len() as i32,
-                std::ptr::null_mut::<i32>(),
-                result.result_impl,
-                num_existing_seq as i32,
-                num_existing_seq as i32 + 1,
-                1,
-            );
-        }
+        let result = self.align_sequence_coded(aln_params, &transformed_seq)?;
+        
+        self.add_alignment(aln_params, sequence, weights, name, &result);
 
         Ok(result)
     }
+    
+    pub fn align_and_add_multiple<S, W, N>(
+        &mut self,
+        aln_params: &AlignmentParameters,
+        sequences: &[S],
+        weights: &[W],
+        names: &[N],
+    ) -> Result<Vec<AlignmentResult>, AbpoaError>
+    where
+        S: AsRef<[u8]>,
+        W: AsRef<[i32]>,
+        N: AsRef<[u8]>,
+    {
+        if sequences.len() != weights.len() || sequences.len() != names.len() {
+            return Err(AbpoaError::InvalidInput);
+        }
+        
+        let transformed_seqs: Vec<_> = sequences.iter()
+            .map(|seq| aln_params.transform_seq(seq.as_ref()))
+            .collect();
+        
+        let (num_existing_seq, num_new) = self.prepare_for_new_sequences(names);
+        
+        let mut all_results = Vec::with_capacity(sequences.len());
+        for (i, (seq, w)) in transformed_seqs.iter()
+            .zip(weights.iter())
+            .enumerate() 
+        {
+            let result = self.align_sequence_coded(aln_params, seq)?;
+            let w = w.as_ref();
+            
+            unsafe {
+                ffi::abpoa_add_graph_alignment(
+                    self.graph_impl,
+                    aln_params.abpoa_params,
+                    seq.as_ptr() as *mut u8,
+                    w.as_ptr() as *mut i32,
+                    seq.len() as i32,
+                    std::ptr::null_mut::<i32>(),
+                    result.result_impl,
+                    (num_existing_seq + i) as i32,
+                    (num_existing_seq + num_new) as i32,
+                    1,
+                );
+            }
+            
+            all_results.push(result);
+        }
+        
+        Ok(all_results)
+    }
 
-    fn prepare_for_new_sequences(&mut self, num_new_sequences: usize) {
+    fn prepare_for_new_sequences<N: AsRef<[u8]>>(&mut self, names: &[N]) -> (usize, usize) {
+        let num_new_sequences = names.len();
+        let num_existing_seq = unsafe { (*self.get_abs_ptr()).n_seq as usize };
+        
         unsafe {
             (*self.get_abs_ptr_mut()).n_seq += num_new_sequences as i32;
             ffi::abpoa_realloc_seq(self.get_abs_ptr_mut());
         }
+        
+        // Set new sequence names
+        for (i, name) in names.iter().enumerate() {
+            unsafe {
+                let n = name.as_ref();
+                let target = (*self.get_abs_ptr()).name.add(num_existing_seq + i);
+                ffi::abpoa_cpy_str(target, n.as_ptr() as *mut i8, n.len() as i32)
+            }
+        }
+        
+        (num_existing_seq, num_new_sequences)
     }
 
     pub fn generate_consensus(&mut self, alg: ConsensusAlgorithm) {
@@ -1311,6 +1373,37 @@ mod tests {
         assert_eq!(result2.get_best_score(), -8);
         assert_eq!(result2.get_num_matches(), sequence2.len() - 2);
         assert_eq!(graph.num_nodes(), 2 + sequence.len() + 2);
+    }
+    
+    #[test]
+    fn test_align_multiple() {
+        let aln_params = AlignmentParametersBuilder::new()
+            .alignment_mode(AlignmentMode::Global)
+            .gap_affine_penalties(0, 4, 6, 2)
+            .verbosity(Verbosity::None)
+            .build();
+
+        let mut graph = Graph::new(&aln_params);
+
+        let test_seq: Vec<&[u8]> = vec![
+            b"ACGTGTACAGTTGAC",
+            b"AGGTACACGTTAC",
+            b"AGTGTCACGTTGAC",
+            b"ACGTGTACATTGAC",
+        ];
+        
+        let weights: Vec<_> = test_seq.iter()
+            .map(|seq| vec![1i32; seq.len()])
+            .collect();
+        
+        let names: Vec<_> = (1..=test_seq.len())
+            .map(|i| format!("seq{}", i))
+            .collect();
+        
+        let _ = graph.align_and_add_multiple(&aln_params, &test_seq, weights.as_slice(), &names)
+            .unwrap();
+        
+        assert_eq!(graph.num_sequences(), 4);
     }
 
     #[test]
