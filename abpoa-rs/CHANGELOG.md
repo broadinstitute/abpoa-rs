@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/broadinstitute/abpoa-rs/compare/abpoa-rs-v0.1.1...abpoa-rs-v0.2.0) - 2024-09-12
+
+### Added
+
+- Add API to align multiple sequences
+
 ## [0.1.1](https://github.com/broadinstitute/abpoa-rs/compare/abpoa-rs-v0.1.0...abpoa-rs-v0.1.1) - 2024-09-11
 
 ### Added
